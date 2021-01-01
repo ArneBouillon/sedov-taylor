@@ -1,17 +1,30 @@
+"""
+The main file that contains the functions for obtaining a self-similar
+ solution to the Sedov-Taylor problem. When run as `'__main__'`, their
+ usage is illustrated through an example for `gamma` equal to `5/3`.
+
+There are a variable and some undocumented keyword parameters that allow
+ a user to recreate the plots from my report. However, these would be
+ removed in a production-type release of the code. As such, the code
+ making these plots is not always very high-quality; it only serves
+ to produce good plots.
+"""
+
 import scipy as sp
 import scipy.integrate as integ
 import scipy.optimize as opt
 import numpy as np
 import matplotlib.pyplot as plt
 
-plt.rcParams.update({'font.size': 22})
+plt.rcParams.update({'font.size': 22}) # The base font size is not very legible
 
 import util
 
-num_calls = 0
-
-
 def eq(eta, y, gamma):
+    """
+    Return the derivatives of A, B and C (`y`) for the given values of
+     `eta` and `gamma`.
+    """
     A, B, C = y
 
     A_ = (A*(16*A*C**3 - 10*A*C**2*gamma - 10*A*C**2 + A*C*gamma**2 + 2*A*C*gamma + A*C - 6*B*gamma**2 + 6*B))/(eta*(gamma - 2*C + 1)*(A + 2*A*gamma + 2*B*gamma + 4*A*C**2 + A*gamma**2 - 2*B*gamma**2 - 4*A*C - 4*A*C*gamma))
@@ -21,6 +34,10 @@ def eq(eta, y, gamma):
     return np.array([A_, B_, C_])
 
 def jac(eta, y, gamma):
+    """
+    Return the Jacobian of the derivatives of A, B and C (`y`) for the
+     given values of `eta` and `gamma`.
+    """
     A, B, C = y
     
     return np.array(
@@ -39,91 +56,152 @@ def jac(eta, y, gamma):
                 (B*(gamma - 1)*(10*C**2*gamma**2 - 16*C**3*gamma + 22*C**2*gamma + 12*C**2 - C*gamma**3 - 14*C*gamma**2 - 25*C*gamma - 12*C + 3*gamma**3 + 9*gamma**2 + 9*gamma + 3))/(eta*(A + 2*A*gamma + 2*B*gamma + 4*A*C**2 + A*gamma**2 - 2*B*gamma**2 - 4*A*C - 4*A*C*gamma)**2),
                 -(A*(gamma - 1)*(10*C**2*gamma**2 - 16*C**3*gamma + 22*C**2*gamma + 12*C**2 - C*gamma**3 - 14*C*gamma**2 - 25*C*gamma - 12*C + 3*gamma**3 + 9*gamma**2 + 9*gamma + 3))/(eta*(A + 2*A*gamma + 2*B*gamma + 4*A*C**2 + A*gamma**2 - 2*B*gamma**2 - 4*A*C - 4*A*C*gamma)**2),
                 -(32*A**2*C**4 - 64*A**2*C**3*gamma - 64*A**2*C**3 + 60*A**2*C**2*gamma**2 + 120*A**2*C**2*gamma + 60*A**2*C**2 - 28*A**2*C*gamma**3 - 84*A**2*C*gamma**2 - 84*A**2*C*gamma - 28*A**2*C + 5*A**2*gamma**4 + 20*A**2*gamma**3 + 30*A**2*gamma**2 + 20*A**2*gamma + 5*A**2 + 56*A*B*C*gamma**3 - 48*A*B*C*gamma**2 - 56*A*B*C*gamma + 48*A*B*C - 22*A*B*gamma**4 + 2*A*B*gamma**3 + 46*A*B*gamma**2 - 2*A*B*gamma - 24*A*B + 24*B**2*gamma**4 - 48*B**2*gamma**3 + 24*B**2*gamma**2)/(2*eta*(A + 2*A*gamma + 2*B*gamma + 4*A*C**2 + A*gamma**2 - 2*B*gamma**2 - 4*A*C - 4*A*C*gamma)**2)
-            ]
+            ],
         ]
     )
 
-def energy_integrand(A, B, C, eta_s):
+def energy_integrand(A, B, C):
+    """
+    Return a function that yields the value of the integrand in
+     the modified Sedov-Taylor energy equation using the given
+     functions `A`, `B` and `C` for an argument `eta`.
+    """
     return lambda eta: (B(eta) + A(eta) * C(eta)**2) * eta**4
 
-def energy(A, B, C, gamma, eta_s):
+def energy_integrand_points(A, B, C, etas):
+    """
+    Return an array of discretisations of the integrand in the
+     modified Sedov-Taylor energy equation, based on the discrete
+     values of `A`, `B` and `C` at the values `eta`.
+    """
+    return B * A * C**2 * etas**4
+
+def energy(gamma, eta_s, offset, sol, etas, method='simps'):
+    """
+    Return the left-hand side of the modified Sedov-Taylor energy
+     equation using the given functions `A`, `B` and `C` and the
+     constants `gamma` and `eta_s`, starting the integration from
+     `offset` instead of from `0`.
+     
+    For the correct value of `eta_s` for the given `gamma`, this
+     should return `1`.
+     
+    The `method` parameter dictates how the integration is carried
+     out. If it is equal to `'quad'`, a ZOH-like approximation of
+     A, B and C is made and integrated using `scipy.integrate.quad`.
+     If it is equal to `'simps'`, the composite Simpson's rule is
+     used.
+    """
     const = 32 * sp.pi / (25 * (gamma**2 - 1))
-    return const * integ.quad(energy_integrand(A, B, C, eta_s), .001, eta_s, limit=500)[0]
-
-def sedov_taylor(gamma, eta_s, plot=False, plot_integrand=False):
-    global num_calls
-    num_calls += 1
     
-    offset = .001
-    eta_s_ = eta_s - offset
+    if method == 'quad':
+        A = util.to_function(sol[:,0], eta_s, offset)
+        B = util.to_function(sol[:,1], eta_s, offset)
+        C = util.to_function(sol[:,2], eta_s, offset)
+        
+        return const * integ.quad(energy_integrand(A, B, C), offset, eta_s, limit=500)[0]
 
-    t = np.linspace(offset, eta_s_, 1000)
+    elif method == 'simps':
+        return const * integ.simps(energy_integrand_points(sol[:,0], sol[:,1], sol[:,2], etas), etas)
+    
+    else:
+        raise ValueError(f'`method` should be "quad" or "simps", but was "{method}" instead.')
+
+def sedov_taylor(gamma, eta_s, offset=.001, points=1000, energy_args={}, plot=False, plot_integrand=False):
+    """
+    Calculate a self-similar solution to the Sedov-Taylor problem
+     using the given values for `gamma` and `eta_s`. The domain
+     considered runs from `offset` to `eta_s`, and `points` points
+     within it are used.
+     
+    The return value is a tuple consisting of the left-hand side
+     of the modified energy equation (see the `energy` function)
+     as well as the calculated `A`, `B` and `C` functions.
+     
+    When calling `energy`, `energy_args` are passed on as keyword
+     parameters.
+    """
+    range_size = eta_s - offset
+
+    # `t` is the range [`0`, `range_size`], because it is `eta_s` - [`offset`, `eta_s`]
+    t = np.linspace(0, range_size, points)
     y0 = [1., 1., 1.]
     
+    # The `odeint` call doesn't actually use `Dfun` in this case, since
+    #  it does not consider the system stiff. However, it is kept for
+    #  reference and to make switching to another integrator easier.
     sol_inv = integ.odeint(util.inv(eq, eta_s), y0, t, args=(gamma,), tfirst=True, Dfun=util.inv(jac, eta_s))
     sol = sol_inv[::-1,:]
-    
-    A_ = util.to_function(sol[:,0].copy(), eta_s)
-    A = lambda eta: A_(eta - offset)
-    B_ = util.to_function(sol[:,1].copy(), eta_s)
-    B = lambda eta: B_(eta - offset)
-    C_ = util.to_function(sol[:,2].copy(), eta_s)
-    C = lambda eta: C_(eta - offset)
 
-    eta = offset;
-    n = len(sol[:,1]) - 1
-    for i in range(n+1):
-        sol[i,1] *= (eta / eta_s_)**2
-        sol[i,2] *= (eta / eta_s_)
-        
-        eta += eta_s / n;
+    e = energy(gamma, eta_s, offset, sol, np.linspace(offset, eta_s, points), **energy_args)
 
-
-    if plot:
-        # plt.plot(t, sol[:,0], '-')
-        # plt.plot(t, sol[:,1], '--')
-        # plt.plot(t, sol[:,2], '-.')
-        # plt.xlabel(r'$\eta$')
-        # plt.ylabel(r'Value relative to $\eta = \eta_s$')
-        # plt.legend([r'$\rho$', '$p$', '$v$'])
-        # plt.savefig('etafs.png', bbox_inches='tight')
-        
-        Adata = sol[:,0]
-        Adata *= (gamma + 1) / (gamma - 1)
-        
-        plt.plot(list(t * .55**.4)+[list(t * .55**.4)[-1], 1], list(Adata) + [1, 1])
-        plt.xlabel(r'$r$')
-        plt.ylabel(r'$\rho$')
-        plt.savefig('recrho.png', bbox_inches='tight')
-    elif plot_integrand:
+    A = util.to_function(sol[:,0], eta_s, offset)
+    B = util.to_function(sol[:,1], eta_s, offset)
+    C = util.to_function(sol[:,2], eta_s, offset)
+    if plot_integrand:
         l = np.linspace(0, eta_s, 2000)
         plt.plot(l, [*map(energy_integrand(A, B, C, eta_s), l)])
         plt.xlabel(r'$\eta$')
         plt.ylabel('Integrand')
         plt.savefig('integrand.png', bbox_inches='tight')
+        plt.clf()
 
-    return energy(A, B, C, gamma, eta_s)
+    if plot:
+        sol = sol.copy()
+        multiplier = np.linspace(offset, eta_s, points)
+        sol[:,1] *= multiplier**2
+        sol[:,2] *= multiplier
+        
+        plt.plot(t, sol[:,0], '-')
+        plt.plot(t, sol[:,1], '--')
+        plt.plot(t, sol[:,2], '-.')
+        plt.xlabel(r'$\eta$')
+        plt.ylabel(r'Value relative to $\eta = \eta_s$')
+        plt.legend([r'$\rho$', '$p$', '$v$'])
+        plt.savefig('etafs.png', bbox_inches='tight')
+        plt.clf()
 
-def find_eta_s(gamma, tol=.0001, eta_s0=1.):
+        Adata = sol[:,0]
+        Adata *= (gamma + 1) / (gamma - 1)
+
+        plt.plot(list(t * .55**.4)+[list(t * .55**.4)[-1], 1], list(Adata) + [1, 1])
+        plt.xlabel(r'$r$')
+        plt.ylabel(r'$\rho$')
+        plt.savefig('recrho.png', bbox_inches='tight')
+        plt.clf()
+
+    return e, A, B, C
+
+def find_eta_s_old(gamma, tol=.0001, eta_s0=1.):
+    """
+    Return the correct value for eta_s for the given value of
+     `gamma` using a tolerance of `tol` and a starting guess
+     of `eta_s0`.
+     
+    This function uses a quick and naive bisection algorithm
+     I implemented to get some first results. Usage of this
+     function is not recommended; `find_eta_s` is much more
+     efficient.
+    """
     eta_s = 1
-    e = sedov_taylor(gamma, eta_s)
+    e = sedov_taylor(gamma, eta_s)[0]
     if e > 1:
         upper = eta_s
         while e > 1:
             eta_s /= 2
-            e = sedov_taylor(gamma, eta_s)
+            e = sedov_taylor(gamma, eta_s)[0]
         lower = eta_s
     else:
         lower = eta_s
         while e < 1:
             eta_s *= 2
-            e = sedov_taylor(gamma, eta_s)
+            e = sedov_taylor(gamma, eta_s)[0]
         upper = eta_s
         
     while upper - lower > tol:
         eta_s = (upper + lower) / 2
 
-        e = sedov_taylor(gamma, eta_s)
+        e = sedov_taylor(gamma, eta_s)[0]
         if e > 1:
             upper = eta_s
         else:
@@ -131,18 +209,59 @@ def find_eta_s(gamma, tol=.0001, eta_s0=1.):
 
     return eta_s
 
-def find_eta_s_opt(gamma, tol=.0001, eta_s0=1.):
-    return opt.root_scalar(lambda eta_s: sedov_taylor(gamma, eta_s) - 1, x0=eta_s0, x1=eta_s0+.1, rtol=tol).root # TODO: Robust
-    
+def find_eta_s(gamma, tol=.0001, eta_s0=1., eta_s1=1.1, st_args={}, verbose=False):
+    """
+    Return the correct value for eta_s for the given value of
+     `gamma` using a tolerance of `tol` and starting guesses
+     of `eta_s0` and `eta_s1`. When calling `sedov_taylor`,
+     `st_args` are passed on as parameters.
+
+    If `verbose` is truthy, more information about the root
+     finding result is printed to STDOUT.
+    """
+
+    result = opt.root_scalar(lambda eta_s: sedov_taylor(gamma, eta_s, **st_args)[0] - 1, x0=eta_s0, x1=eta_s1, rtol=tol)
+
+    if verbose:
+        print("find_eta_s:")
+        print(f"  {result.function_calls} function calls made")
+        print(f"  {result.iterations} iterations done")
+        print(f"  Converged? {result.converged}")
+        print(f"  Exit flag: {result.flag}")
+
+    elif not result.converged:
+        print("find_eta_s:")
+        print("  Warning: `scipy.optimize.root_scalar` has not converged!")
+
+    return result.root
 
 
 if __name__ == '__main__':
-    # gamma = 5/3
-    # eta_s = find_eta_s_opt(gamma)
-    # sedov_taylor(gamma, eta_s, plot=True)
-    
-    eta_s_s = [*map(lambda gamma: print(gamma) or find_eta_s_opt(gamma), np.linspace(1.2, 2, 100))]
-    plt.plot(np.linspace(1.2, 2, 100), eta_s_s)
-    plt.xlabel(r'$\gamma$')
-    plt.ylabel(r'$\eta_s$')
-    plt.savefig('etass.png', bbox_inches='tight')
+    PLOT = False # Set this to `True` to recreate some of the plots from the report
+
+    gamma = 5/3
+    eta_s = find_eta_s(gamma)
+    sedov_taylor(gamma, eta_s, plot=PLOT, plot_integrand=PLOT)
+
+    if PLOT:
+        eta_s_s = [*map(lambda gamma: print(gamma) or find_eta_s(gamma), np.linspace(1.2, 2, 100))]
+        plt.plot(np.linspace(1.2, 2, 100), eta_s_s)
+        plt.xlabel(r'$\gamma$')
+        plt.ylabel(r'$\eta_s$')
+        plt.savefig('etass.png', bbox_inches='tight')
+        plt.clf()
+
+    else:
+        for method in ('quad', 'simps'):
+            pointss = [*map(lambda p:int(p) if int(p) % 2 else int(p) + 1, 10**np.linspace(1, 4, 100))]
+            eta_s_s = [*map(lambda points: print(points) or find_eta_s(5/3, st_args={'points': points, 'energy_args': {'method': method}}), pointss)]
+            diffs = [abs(x - eta_s_s[-1]) for x in eta_s_s[:-1]]
+            plt.plot(pointss[:-1], diffs)
+
+        plt.xlabel(r'Points')
+        plt.ylabel(r'$|\eta_{s, points} - \eta_s|$')
+        plt.xscale('log')
+        plt.yscale('log')
+        plt.legend(["'quad'", "'simps'"])
+        plt.savefig('pointss.png', bbox_inches='tight')
+        plt.clf()

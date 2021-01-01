@@ -1,3 +1,5 @@
+! setup.pl -d=1
+
 module mod_usr
     use mod_hd
     implicit none
