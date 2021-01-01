@@ -251,12 +251,11 @@ if __name__ == '__main__':
         plt.savefig('etass.png', bbox_inches='tight')
         plt.clf()
 
-    else:
         for method in ('quad', 'simps'):
             pointss = [*map(lambda p:int(p) if int(p) % 2 else int(p) + 1, 10**np.linspace(1, 4, 100))]
             eta_s_s = [*map(lambda points: print(points) or find_eta_s(5/3, st_args={'points': points, 'energy_args': {'method': method}}), pointss)]
             diffs = [abs(x - eta_s_s[-1]) for x in eta_s_s[:-1]]
-            plt.plot(pointss[:-1], diffs)
+            plt.plot(pointss[:-1], diffs, '-' if method == 'quad' else '--')
 
         plt.xlabel(r'Points')
         plt.ylabel(r'$|\eta_{s, points} - \eta_s|$')
