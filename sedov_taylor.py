@@ -60,23 +60,25 @@ def jac(eta, y, gamma):
         ]
     )
 
-def energy_integrand(A, B, C):
+def energy_integrand(A_fun, B_fun, C_fun):
     """
     Return a function that yields the value of the integrand in
      the modified Sedov-Taylor energy equation using the given
-     functions `A`, `B` and `C` for an argument `eta`.
+     functions `A_fun`, `B_fun` and `C_fun` for an argument `eta`.
     """
-    return lambda eta: (B(eta) + A(eta) * C(eta)**2) * eta**4
+    return lambda eta: (B_fun(eta) + A_fun(eta) * C_fun(eta)**2) * eta**4
 
 def energy_integrand_points(A, B, C, etas):
     """
     Return an array of discretisations of the integrand in the
      modified Sedov-Taylor energy equation, based on the discrete
-     values of `A`, `B` and `C` at the values `eta`.
+     values of `A`, `B` and `C` at the values `etas` (a list of
+     eta values; not to be confused with eta_s, the value of eta
+     at which the shock occurs).
     """
-    return B * A * C**2 * etas**4
+    return (B + A * C**2) * etas**4
 
-def energy(gamma, eta_s, offset, sol, etas, method='simps'):
+def energy(gamma, eta_s, offset, sol, method='simps', etas=None):
     """
     Return the left-hand side of the modified Sedov-Taylor energy
      equation using the given functions `A`, `B` and `C` and the
@@ -91,23 +93,34 @@ def energy(gamma, eta_s, offset, sol, etas, method='simps'):
      A, B and C is made and integrated using `scipy.integrate.quad`.
      If it is equal to `'simps'`, the composite Simpson's rule is
      used.
+     
+    When `method` is equal to `simps`, a `etas` keyword argument is
+     expected, containing the list of eta values at which `sol` was
+     computed.
     """
     const = 32 * sp.pi / (25 * (gamma**2 - 1))
     
+    A = sol[:,0]
+    B = sol[:,1]
+    C = sol[:,2]
+    
     if method == 'quad':
-        A = util.to_function(sol[:,0], eta_s, offset)
-        B = util.to_function(sol[:,1], eta_s, offset)
-        C = util.to_function(sol[:,2], eta_s, offset)
-        
-        return const * integ.quad(energy_integrand(A, B, C), offset, eta_s, limit=500)[0]
+        A_fun = util.to_function(A, eta_s, offset)
+        B_fun = util.to_function(B, eta_s, offset)
+        C_fun = util.to_function(C, eta_s, offset)
+
+        return const * integ.quad(energy_integrand(A_fun, B_fun, C_fun), offset, eta_s, limit=500)[0]
 
     elif method == 'simps':
-        return const * integ.simps(energy_integrand_points(sol[:,0], sol[:,1], sol[:,2], etas), etas)
+        if etas is None:
+            raise ValueError('For the "simps" method, the `etas` keyword argument is needed.')
+        
+        return const * integ.simps(energy_integrand_points(A, B, C, etas), etas)
     
     else:
         raise ValueError(f'`method` should be "quad" or "simps", but was "{method}" instead.')
 
-def sedov_taylor(gamma, eta_s, offset=.001, points=1000, energy_args={}, plot=False, plot_integrand=False):
+def sedov_taylor(gamma, eta_s, offset=.001, points=1001, energy_args={}, plot=False, plot_integrand=False):
     """
     Calculate a self-similar solution to the Sedov-Taylor problem
      using the given values for `gamma` and `eta_s`. The domain
@@ -133,14 +146,16 @@ def sedov_taylor(gamma, eta_s, offset=.001, points=1000, energy_args={}, plot=Fa
     sol_inv = integ.odeint(util.inv(eq, eta_s), y0, t, args=(gamma,), tfirst=True, Dfun=util.inv(jac, eta_s))
     sol = sol_inv[::-1,:]
 
-    e = energy(gamma, eta_s, offset, sol, np.linspace(offset, eta_s, points), **energy_args)
+    # The eta values for which the `sol` contains the solution
+    etas = np.linspace(offset, eta_s, points)
+    e = energy(gamma, eta_s, offset, sol, etas=etas, **energy_args)
 
-    A = util.to_function(sol[:,0], eta_s, offset)
-    B = util.to_function(sol[:,1], eta_s, offset)
-    C = util.to_function(sol[:,2], eta_s, offset)
+    A = sol[:,0].copy()
+    B = sol[:,1].copy()
+    C = sol[:,2].copy()
+
     if plot_integrand:
-        l = np.linspace(0, eta_s, 2000)
-        plt.plot(l, [*map(energy_integrand(A, B, C, eta_s), l)])
+        plt.plot(etas, energy_integrand_points(A, B, C, etas))
         plt.xlabel(r'$\eta$')
         plt.ylabel('Integrand')
         plt.savefig('integrand.png', bbox_inches='tight')
@@ -148,7 +163,7 @@ def sedov_taylor(gamma, eta_s, offset=.001, points=1000, energy_args={}, plot=Fa
 
     if plot:
         sol = sol.copy()
-        multiplier = np.linspace(offset, eta_s, points)
+        multiplier = np.linspace(offset, eta_s, points) / eta_s
         sol[:,1] *= multiplier**2
         sol[:,2] *= multiplier
         
@@ -170,7 +185,11 @@ def sedov_taylor(gamma, eta_s, offset=.001, points=1000, energy_args={}, plot=Fa
         plt.savefig('recrho.png', bbox_inches='tight')
         plt.clf()
 
-    return e, A, B, C
+    A_fun = util.to_function(A, eta_s, offset)
+    B_fun = util.to_function(B, eta_s, offset)
+    C_fun = util.to_function(C, eta_s, offset)
+    
+    return e, A_fun, B_fun, C_fun
 
 def find_eta_s_old(gamma, tol=.0001, eta_s0=1.):
     """
@@ -237,14 +256,24 @@ def find_eta_s(gamma, tol=.0001, eta_s0=1., eta_s1=1.1, st_args={}, verbose=Fals
 
 
 if __name__ == '__main__':
-    PLOT = False # Set this to `True` to recreate some of the plots from the report
+    # Set `PLOT` to `True` to recreate some of the plots from the report.
+    #
+    # As a heads-up: setting this to `True` will produce quite a few
+    #  scipy warnings caused by edge cases or other "extreme" parameters
+    #  that are used throughout plotting. These warnings should not occur
+    #  using common parameter combinations and the `simps` integrator.
+    #  Additionally, even in the cases where they do, the results of the
+    #  still seem fine visually, no doubt a testament to the robust
+    #  underlying numerical methods.
+    PLOT = True
 
     gamma = 5/3
     eta_s = find_eta_s(gamma)
+    print(f"gamma = {round(gamma, 4)} yields eta_s = {round(eta_s, 4)}") 
     sedov_taylor(gamma, eta_s, plot=PLOT, plot_integrand=PLOT)
 
     if PLOT:
-        eta_s_s = [*map(lambda gamma: print(gamma) or find_eta_s(gamma), np.linspace(1.2, 2, 100))]
+        eta_s_s = [find_eta_s(g) for g in np.linspace(1.2, 2, 100)]
         plt.plot(np.linspace(1.2, 2, 100), eta_s_s)
         plt.xlabel(r'$\gamma$')
         plt.ylabel(r'$\eta_s$')
@@ -252,15 +281,26 @@ if __name__ == '__main__':
         plt.clf()
 
         for method in ('quad', 'simps'):
-            pointss = [*map(lambda p:int(p) if int(p) % 2 else int(p) + 1, 10**np.linspace(1, 4, 100))]
-            eta_s_s = [*map(lambda points: print(points) or find_eta_s(5/3, st_args={'points': points, 'energy_args': {'method': method}}), pointss)]
-            diffs = [abs(x - eta_s_s[-1]) for x in eta_s_s[:-1]]
-            plt.plot(pointss[:-1], diffs, '-' if method == 'quad' else '--')
+            # `simps` wants an odd number of points, hence the `+1` at
+            #  certain places.
+            reference = find_eta_s(gamma, st_args={'points': 10**5+1, 'energy_args': {'method': method}})
+
+            pointss = [(int(points) if int(points) % 2 else int(points)+1) for points in 10**np.linspace(1, 4, 100)]
+            eta_s_s = [
+                # `print` returns `None`, allowing it to be chained using `or`.
+                print(f'Using {points} points') or
+                find_eta_s(gamma, st_args={'points': points, 'energy_args': {'method': method}})
+                for points in pointss    
+            ]
+            diffs = [abs(x - reference) for x in eta_s_s]
+
+            plt.plot(pointss, diffs, '-' if method == 'quad' else '--')
 
         plt.xlabel(r'Points')
         plt.ylabel(r'$|\eta_{s, points} - \eta_s|$')
         plt.xscale('log')
         plt.yscale('log')
         plt.legend(["'quad'", "'simps'"])
+        plt.yticks([10**-2, 10**-4, 10**-6, 10**-8, 10**-10])
         plt.savefig('pointss.png', bbox_inches='tight')
         plt.clf()
